@@ -24,9 +24,9 @@ module.exports = {
 
             let leaderboard = '';
             for (let i = 0; i < topUsers.length; i++) {
-                const user = await client.users.fetch(topUsers[i].user_id).catch(() => null);
-                const username = user ? user.tag : `Unknown (${topUsers[i].user_id})`;
-                leaderboard += `**${i + 1}. ${username}** — ${Number(topUsers[i].avg_rating).toFixed(2)}/5 ⭐ (${topUsers[i].reviews_count} reviews)\n`;
+                const avgRating = Number(topUsers[i].avg_rating);
+                const displayRating = avgRating % 1 === 0 ? avgRating.toString() : avgRating.toFixed(2);
+                leaderboard += `**${i + 1}. <@${topUsers[i].user_id}>** — ${displayRating} ⭐ (${topUsers[i].reviews_count} reviews)\n`;
             }
 
             const embed = new EmbedBuilder()
