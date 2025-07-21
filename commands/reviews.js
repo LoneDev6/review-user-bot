@@ -34,7 +34,7 @@ module.exports = {
                 .setDescription(leaderboard || 'No reviews available.')
                 .setColor(config.embed.color);
 
-            await interaction.reply({
+            return await interaction.reply({
                 embeds: [embed],
                 ephemeral: true
             });

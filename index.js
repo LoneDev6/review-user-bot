@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-const { Client, Collection, Events, GatewayIntentBits, Partials } = require('discord.js');
+const { Client, Collection, Events, GatewayIntentBits, Partials, ActivityType } = require('discord.js');
 const chalk = require('chalk');
 const Database = require('better-sqlite3');
 
@@ -91,6 +91,12 @@ client.once(Events.ClientReady, async () => {
     await guild.commands.create(commandReviews.data);
 
     console.log('[DEBUG] Commands deployed!');
+
+    // Set the status of the bot to a waifu message
+    client.user.setPresence({
+        activities: [{ name: 'you~ ^-^', type: ActivityType.Watching }],
+        status: 'online'
+    });
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
