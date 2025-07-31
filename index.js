@@ -40,8 +40,10 @@ function initDb() {
     return db;
 }
 
-client.postReview = async function (guildId, userId, authorId, review, rating, notificationMessageId) {
-    const timestamp = new Date().toISOString();
+client.postReview = async function (guildId, userId, authorId, review, rating, notificationMessageId, timestamp = undefined) {
+    if(!timestamp) {
+        timestamp = new Date().toISOString();
+    }
     db.prepare(`
         INSERT OR REPLACE INTO reviews (guild_id, user_id, author_id, review, rating, timestamp, notification_message_id)
         VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -61,14 +63,89 @@ client.getLastReviewOfAuthor = async function (authorId) {
 }
 
 client.getTopUsers = async function (limit) {
+    // Returns normalized top users based on average rating and number of reviews
     return db.prepare(`
-        SELECT user_id, AVG(rating) as avg_rating, COUNT(*) as reviews_count
+        SELECT user_id, 
+               AVG(rating) AS avg_rating, 
+               COUNT(*) AS reviews_count, 
+               SUM(rating) AS total_rating,
+               LOG(COUNT(*) + 1) AS log_reviews,
+               (SUM(rating) / LOG(COUNT(*) + 1)) AS adjusted_score
         FROM reviews
         GROUP BY user_id
-        ORDER BY avg_rating DESC, reviews_count DESC
+        ORDER BY adjusted_score DESC
         LIMIT ?
     `).all(limit);
 };
+
+async function loadMissingReviews(guild) {
+    const reviewChannel = guild.channels.cache.get(config.reviewChannel);
+    if (!reviewChannel || !reviewChannel.isTextBased()) {
+        console.log(chalk.red('[ERROR] Review channel not found or is not text-based.'));
+        return;
+    }
+
+    console.log(chalk.yellow('[INFO] Scanning review channel for missing reviews...'));
+
+    let fetched;
+    let lastId;
+    let processed = 0;
+    let inserted = 0;
+
+    do {
+        fetched = await reviewChannel.messages.fetch({ limit: 100, before: lastId });
+        lastId = fetched.last()?.id;
+
+        for (const message of fetched.values()) {
+            if (!message.embeds.length) continue;
+
+            const embed = message.embeds[0];
+            if (!embed.data.fields) continue;
+
+            const ratingField = embed.data.fields.find(f => f.name === "Rating");
+            const feedbackField = embed.data.fields.find(f => f.name === "Feedback");
+            const reviewedUserField = embed.data.fields.find(f => f.name === "Reviewed User");
+            const reviewerField = embed.data.fields.find(f => f.name === "Reviewer");
+
+            if (!ratingField || !feedbackField || !reviewedUserField || !reviewerField) continue;
+
+            const reviewedUserId = reviewedUserField.value.replace(/[<@>]/g, "");
+            const authorId = reviewerField.value.replace(/[<@>]/g, "");
+            const feedback = feedbackField.value;
+            const ratingMatch = ratingField.value.match(/\((\d)\/5\)/);
+            const rating = ratingMatch ? parseInt(ratingMatch[1], 10) : null;
+
+            if (!reviewedUserId || !authorId || !rating) continue;
+
+            // Calculate if the review already exists in the same day
+            const existing = db.prepare(`
+                SELECT * FROM reviews
+                WHERE guild_id = ? AND user_id = ? AND author_id = ?
+                AND DATE(timestamp) = DATE(?)
+            `).get(guild.id, reviewedUserId, authorId, message.createdAt.toISOString());
+
+            if (!existing) {
+                client.postReview(
+                    guild.id,
+                    reviewedUserId,
+                    authorId,
+                    feedback,
+                    rating,
+                    message.id,
+                    message.createdAt.toISOString()
+                );
+                inserted++;
+                console.log(chalk.green(`[INFO] Inserted review for user ${reviewedUserId} by author ${authorId} on ${message.createdAt.toISOString()}`));
+            } else {
+                console.log(chalk.yellow(`[WARN] Review already exists for user ${reviewedUserId} by author ${authorId} on ${message.createdAt.toISOString()}`));
+            }
+
+            processed++;
+        }
+    } while (fetched.size >= 100);
+
+    console.log(chalk.green(`[INFO] Scan complete. Processed: ${processed}, Inserted new: ${inserted}`));
+}
 
 client.once(Events.ClientReady, async () => {
     const guild = client.guilds.cache.get(config.guildId);
@@ -97,6 +174,10 @@ client.once(Events.ClientReady, async () => {
         activities: [{ name: 'you~ ^-^', type: ActivityType.Watching }],
         status: 'online'
     });
+    console.log(chalk.green('[INFO] Bot status set to "Watching you~ ^-^"'));
+
+    // Load missing reviews from the review channel
+    loadMissingReviews(guild);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
